@@ -1,35 +1,57 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Play, Pause, Square, MapPin, Clock, Navigation } from 'lucide-react';
 
-// Função auxiliar para converter graus em radianos
-const deg2rad = (deg) => {
-  return deg * (Math.PI / 180);
-};
+// =========================================
+// UTILITÁRIOS MATEMÁTICOS
+// =========================================
+const deg2rad = (deg) => deg * (Math.PI / 180);
 
-// Fórmula de Haversine para calcular a distância entre dois pontos lat/long em metros
+// Fórmula de Haversine para distância em metros
 const getDistanceFromLatLonInMeters = (lat1, lon1, lat2, lon2) => {
-  const R = 6371e3; // Raio da Terra em metros
+  const R = 6371e3;
   const dLat = deg2rad(lat2 - lat1);
   const dLon = deg2rad(lon2 - lon1);
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+            Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+            Math.sin(dLon / 2) * Math.sin(dLon / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 };
 
-// Componente para formatar o tempo (HH:MM:SS)
-const formatTime = (totalSeconds) => {
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
+// =========================================
+// FILTRO DE KALMAN SIMPLIFICADO (1D para Lat/Lon separado)
+// =========================================
+class KalmanFilter {
+  constructor(processNoise = 1, measurementNoise = 10, estimationError = 10, initialValue = 0) {
+    this.Q = processNoise; // Ruído do processo (o quanto confiamos no modelo de movimento)
+    this.R = measurementNoise; // Ruído da medição (incerteza do GPS)
+    this.P = estimationError; // Erro da estimativa atual
+    this.X = initialValue; // Estado atual estimado (posição)
+  }
 
-  return [hours, minutes, seconds]
-    .map(v => v < 10 ? "0" + v : v)
-    .join(":");
-};
+  update(measurement, accuracy) {
+    // Atualiza o ruído da medição com a precisão real do GPS no momento
+    this.R = accuracy * accuracy; 
 
+    // Previsão (simples: assumimos que ficou parado, movimento entra como ruído Q)
+    this.P = this.P + this.Q;
+
+    // Ganho de Kalman
+    const K = this.P / (this.P + this.R);
+
+    // Atualização do estado com a nova medição
+    this.X = this.X + K * (measurement - this.X);
+
+    // Atualização da covariância do erro
+    this.P = (1 - K) * this.P;
+
+    return this.X;
+  }
+}
+
+// =========================================
+// COMPONENTE PRINCIPAL
+// =========================================
 function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [timeElapsed, setTimeElapsed] = useState(0);
@@ -38,223 +60,177 @@ function App() {
   const [gpsAccuracy, setGpsAccuracy] = useState(null);
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Referências para manter valores entre renderizações
+  // Refs para manter estado entre renderizações sem re-render
   const lastPositionRef = useRef(null);
   const watchIdRef = useRef(null);
   const timerRef = useRef(null);
-  // Histórico recente de posições para média móvel
-  const positionHistoryRef = useRef([]);
+  
+  // Refs para os filtros de Kalman (um para Latitude, um para Longitude)
+  const latKalmanRef = useRef(new KalmanFilter(3, 10, 10, 0)); 
+  const lonKalmanRef = useRef(new KalmanFilter(3, 10, 10, 0));
+  const isFirstReadingRef = useRef(true);
 
-  // Efeito para o Cronômetro
+  // Cronômetro
   useEffect(() => {
     if (isRunning) {
-      timerRef.current = setInterval(() => {
-        setTimeElapsed(prev => prev + 1);
-      }, 1000);
+      timerRef.current = setInterval(() => setTimeElapsed(p => p + 1), 1000);
     } else {
       clearInterval(timerRef.current);
     }
     return () => clearInterval(timerRef.current);
   }, [isRunning]);
 
-  // Efeito para a Geolocalização com filtragem
+  // Geolocalização com Filtro Kalman
   useEffect(() => {
     if (isRunning) {
-      if (!navigator.geolocation) {
-        setErrorMsg('Geolocalização não é suportada pelo seu navegador.');
-        return;
-      }
-
-      const options = {
-        enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 0
-      };
+      if (!navigator.geolocation) return setErrorMsg('Sem suporte a GPS.');
 
       const success = (pos) => {
         let { latitude, longitude, accuracy, speed } = pos.coords;
 
-        // 1. Filtro de Precisão Básica: Ignora leituras muito ruins (> 50m)
-        if (accuracy > 50) {
-            setGpsAccuracy(accuracy);
-            return; 
+        // 1. Filtro Grosso: Ignora leituras absurdamente ruins (> 60m)
+        if (accuracy > 60) {
+            setGpsAccuracy(accuracy); return; 
         }
-
+        
         setGpsAccuracy(accuracy);
         setCurrentSpeed(speed || 0);
 
-        // 2. Filtro de Média Móvel (Suavização)
-        const history = positionHistoryRef.current;
-        history.push({ latitude, longitude });
-        if (history.length > 5) history.shift();
-
-        if (history.length > 0) {
-            const avgLat = history.reduce((sum, p) => sum + p.latitude, 0) / history.length;
-            const avgLon = history.reduce((sum, p) => sum + p.longitude, 0) / history.length;
-            latitude = avgLat;
-            longitude = avgLon;
+        // 2. Inicialização dos Filtros na primeira leitura válida
+        if (isFirstReadingRef.current) {
+            latKalmanRef.current = new KalmanFilter(3, accuracy, accuracy, latitude);
+            lonKalmanRef.current = new KalmanFilter(3, accuracy, accuracy, longitude);
+            isFirstReadingRef.current = false;
+            lastPositionRef.current = { latitude, longitude, timestamp: pos.timestamp };
+            return;
         }
 
+        // 3. Aplica o Filtro de Kalman
+        const smoothLat = latKalmanRef.current.update(latitude, accuracy);
+        const smoothLon = lonKalmanRef.current.update(longitude, accuracy);
+
+        // 4. Cálculo de Distância com dados suavizados
         if (lastPositionRef.current) {
           const dist = getDistanceFromLatLonInMeters(
             lastPositionRef.current.latitude,
             lastPositionRef.current.longitude,
-            latitude,
-            longitude
+            smoothLat,
+            smoothLon
           );
 
-          // 3. Filtro de Movimento Mínimo e Velocidade Realista
-          const timeDiff = (pos.timestamp - lastPositionRef.current.timestamp) / 1000; // segundos
-          const calculatedSpeed = timeDiff > 0 ? dist / timeDiff : 0; // m/s
+          // 5. Deadband Dinâmico: Só conta se moveu mais que a "incerteza" atual filtrada
+          // Usei 0.8m como base mínima para tentar pegar passos lentos, mas exigindo consistência.
+          const timeDiff = (pos.timestamp - lastPositionRef.current.timestamp) / 1000;
+          const calculatedSpeed = timeDiff > 0 ? dist / timeDiff : 0;
 
-          // Se moveu > 1.5m E a velocidade calculada é < 36km/h (10m/s)
-          if (dist > 1.5 && calculatedSpeed < 10) {
-             setDistance(prevDist => prevDist + dist);
-             lastPositionRef.current = { latitude, longitude, timestamp: pos.timestamp };
+          // Se moveu > 0.8m E velocidade < 30km/h (para evitar teleportes)
+          if (dist > 0.8 && calculatedSpeed < 8.3) {
+             setDistance(d => d + dist);
+             lastPositionRef.current = { latitude: smoothLat, longitude: smoothLon, timestamp: pos.timestamp };
           }
-        } else {
-           lastPositionRef.current = { latitude, longitude, timestamp: pos.timestamp };
         }
         setErrorMsg('');
       };
 
-      const error = (err) => {
-        let msg = 'Erro desconhecido de localização.';
-        if (err.code === 1) msg = 'Permissão de localização negada.';
-        if (err.code === 2) msg = 'Sinal de GPS indisponível. Vá para uma área aberta.';
-        if (err.code === 3) msg = 'Tempo esgotado ao buscar localização.';
-        setErrorMsg(msg);
-      };
+      const error = (err) => setErrorMsg(err.code === 1 ? 'Permissão negada.' : 'Sinal GPS perdido.');
 
-      watchIdRef.current = navigator.geolocation.watchPosition(success, error, options);
+      watchIdRef.current = navigator.geolocation.watchPosition(success, error, {
+        enableHighAccuracy: true, timeout: 20000, maximumAge: 0
+      });
 
     } else {
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-        watchIdRef.current = null;
-      }
+      // Cleanup ao pausar/parar
+      if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
       lastPositionRef.current = null;
-      positionHistoryRef.current = [];
+      isFirstReadingRef.current = true;
     }
-
-    return () => {
-      if (watchIdRef.current !== null) {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-      }
-    };
+    return () => { if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current); };
   }, [isRunning]);
 
-  const handleStart = () => {
-    setErrorMsg('Aguardando sinal de GPS estável...');
-    setIsRunning(true);
-  };
-
-  const handlePause = () => {
-    setIsRunning(false);
-  };
-
+  // Reset total
   const handleReset = () => {
-    setIsRunning(false);
-    setTimeElapsed(0);
-    setDistance(0);
-    setCurrentSpeed(0);
-    setGpsAccuracy(null);
-    setErrorMsg('');
-    lastPositionRef.current = null;
-    positionHistoryRef.current = [];
+    setIsRunning(false); setTimeElapsed(0); setDistance(0);
+    setCurrentSpeed(0); setGpsAccuracy(null); setErrorMsg('');
+    lastPositionRef.current = null; isFirstReadingRef.current = true;
   };
 
-  const speedKmh = (currentSpeed * 3.6).toFixed(1);
+  // Formatação de Tempo HH:MM:SS
+  const formatTime = (totalSeconds) => {
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    return [h, m, s].map(v => v < 10 ? "0" + v : v).join(":");
+  };
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white flex flex-col font-sans">
-      {/* Header */}
-      <div className="p-6 bg-gray-800 shadow-md border-b border-gray-700">
-        <h1 className="text-center text-xl font-semibold tracking-wider text-blue-400 uppercase">
-          Rastreador Pro (Filtro Ativo)
-        </h1>
+    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col font-sans">
+      <div className="p-4 bg-gray-900 border-b border-gray-800 text-center">
+        <h1 className="text-lg font-bold text-blue-400 tracking-widest uppercase">Rastreador Pro V2</h1>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col items-center justify-start p-6 space-y-8">
-        
-        {errorMsg && (
-          <div className={`w-full max-w-md p-3 rounded-lg text-center text-sm font-medium ${errorMsg.includes('Aguardando') ? 'bg-blue-900/50 text-blue-200' : 'bg-red-900/50 text-red-200'}`}>
-            {errorMsg}
-          </div>
-        )}
+      <div className="flex-1 flex flex-col items-center p-6 space-y-8">
+        {errorMsg && <div className="bg-red-900/50 text-red-200 p-2 rounded text-sm">{errorMsg}</div>}
 
-        <div className="relative flex items-center justify-center w-72 h-72 rounded-full bg-gradient-to-br from-gray-800 to-gray-900 shadow-[0_0_30px_rgba(0,0,0,0.5)] border-4 border-gray-700">
-          <div className="text-center z-10 flex flex-col items-center">
-            <MapPin className="w-8 h-8 text-emerald-500 mb-2 opacity-80" />
-            <span className="text-6xl font-bold tracking-tighter font-mono">
-              {distance < 1000 
-                ? Math.floor(distance) 
-                : (distance / 1000).toFixed(2)}
-            </span>
-            <span className="text-gray-400 text-xl uppercase mt-1">
-              {distance < 1000 ? 'Metros' : 'KM'}
-            </span>
-          </div>
+        {/* Círculo Principal de Distância */}
+        <div className="relative flex flex-col items-center justify-center w-72 h-72 rounded-full bg-gradient-to-br from-gray-900 to-black border-4 border-gray-800 shadow-2xl">
+          <MapPin className="w-8 h-8 text-emerald-500 opacity-70 mb-1" />
+          
+          {/* Exibição com Metros e Centímetros */}
+          <span className="text-6xl font-bold font-mono tracking-tighter">
+            {distance < 1000 
+              ? distance.toFixed(2) // Mostra 2 casas decimais (centímetros)
+              : (distance / 1000).toFixed(3) // Mostra 3 casas para KM (metros)
+            }
+          </span>
+          <span className="text-gray-400 text-xl uppercase mt-2 font-medium">
+            {distance < 1000 ? 'Metros' : 'KM'}
+          </span>
+
           {isRunning && (
-            <div className="absolute w-full h-full rounded-full border-4 border-t-emerald-500 border-r-transparent border-b-transparent border-l-transparent animate-spin duration-3000"></div>
+            <div className="absolute inset-0 rounded-full border-4 border-t-emerald-500/80 border-r-emerald-500/20 border-b-transparent border-l-transparent animate-spin [animation-duration:3s]"></div>
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-4 w-full max-w-md">
-          <div className="bg-gray-800 p-4 rounded-2xl flex flex-col items-center shadow-lg border border-gray-700">
-            <Clock className="w-6 h-6 text-blue-400 mb-2" />
-            <span className="text-2xl font-mono font-semibold">
-              {formatTime(timeElapsed)}
-            </span>
-            <span className="text-xs text-gray-400 uppercase mt-1">Tempo</span>
+        {/* Cards de Métricas Secundárias */}
+        <div className="grid grid-cols-2 gap-4 w-full max-w-sm">
+          <div className="bg-gray-900 p-4 rounded-2xl border border-gray-800 flex flex-col items-center">
+            <Clock className="text-blue-500 w-6 h-6 mb-2" />
+            <span className="text-2xl font-mono font-bold">{formatTime(timeElapsed)}</span>
+            <span className="text-xs text-gray-500 uppercase">Tempo</span>
           </div>
-          <div className="bg-gray-800 p-4 rounded-2xl flex flex-col items-center shadow-lg border border-gray-700">
-            <Navigation className="w-6 h-6 text-purple-400 mb-2" />
-            <span className="text-2xl font-mono font-semibold">
-              {speedKmh}
-            </span>
-            <span className="text-xs text-gray-400 uppercase mt-1">km/h</span>
+          <div className="bg-gray-900 p-4 rounded-2xl border border-gray-800 flex flex-col items-center">
+            <Navigation className="text-purple-500 w-6 h-6 mb-2" />
+            <span className="text-2xl font-mono font-bold">{(currentSpeed * 3.6).toFixed(1)}</span>
+            <span className="text-xs text-gray-500 uppercase">km/h</span>
           </div>
         </div>
-        
+
+        {/* Indicador de Precisão */}
         {gpsAccuracy !== null && isRunning && (
-             <div className="text-xs text-gray-500 flex items-center">
-               <div className={`w-2 h-2 rounded-full mr-2 ${gpsAccuracy < 15 ? 'bg-green-500' : gpsAccuracy < 30 ? 'bg-yellow-500' : 'bg-red-500'}`}></div>
-               Precisão do GPS: ±{Math.round(gpsAccuracy)}m
-             </div>
+          <div className="flex items-center space-x-2 bg-gray-900 px-3 py-1.5 rounded-full text-xs font-medium text-gray-400 border border-gray-800">
+            <div className={`w-2.5 h-2.5 rounded-full ${gpsAccuracy < 10 ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : gpsAccuracy < 30 ? 'bg-yellow-500' : 'bg-red-500'}`} />
+            <span>Precisão: ±{gpsAccuracy.toFixed(1)}m</span>
+          </div>
         )}
-
       </div>
 
-      <div className="bg-gray-800 p-6 pb-10 rounded-t-3xl shadow-[0_-5px_20px_rgba(0,0,0,0.3)]">
-        <div className="flex justify-center items-center space-x-6">
-          {!isRunning ? (
-            <button 
-              onClick={handleStart}
-              className="flex flex-col items-center justify-center w-20 h-20 bg-emerald-600 active:bg-emerald-700 rounded-full shadow-lg transition-transform active:scale-95"
-            >
-              <Play fill="white" size={32} className="ml-1" />
+      {/* Controles */}
+      <div className="bg-gray-900 p-6 rounded-t-[2.5rem] shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.5)]">
+        <div className="flex items-center justify-center gap-6">
+           {!isRunning ? (
+            <button onClick={() => { setErrorMsg('Aguardando GPS...'); setIsRunning(true); }} className="w-20 h-20 bg-emerald-600 hover:bg-emerald-500 active:scale-95 rounded-full flex items-center justify-center shadow-lg shadow-emerald-900/30 transition-all">
+              <Play fill="white" size={36} className="ml-2" />
             </button>
-          ) : (
-            <button 
-              onClick={handlePause}
-              className="flex flex-col items-center justify-center w-20 h-20 bg-amber-500 active:bg-amber-600 rounded-full shadow-lg transition-transform active:scale-95"
-            >
-              <Pause fill="white" size={32} />
+           ) : (
+            <button onClick={() => setIsRunning(false)} className="w-20 h-20 bg-amber-500 hover:bg-amber-400 active:scale-95 rounded-full flex items-center justify-center shadow-lg shadow-amber-900/30 transition-all">
+              <Pause fill="white" size={36} />
             </button>
-          )}
-
-          <button 
-            onClick={handleReset}
-            disabled={isRunning && timeElapsed === 0}
-            className="flex flex-col items-center justify-center w-14 h-14 bg-gray-700 active:bg-gray-600 rounded-full shadow-md transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Square fill="white" size={20} />
-          </button>
+           )}
+           <button onClick={handleReset} disabled={isRunning && timeElapsed === 0} className="w-14 h-14 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:pointer-events-none active:scale-95 rounded-full flex items-center justify-center border border-gray-700 transition-all">
+             <Square fill="white" size={20} />
+           </button>
         </div>
       </div>
-
     </div>
   );
 }
