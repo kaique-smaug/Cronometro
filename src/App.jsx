@@ -1,238 +1,242 @@
+// src/App.jsx
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, Square, MapPin, Clock, Navigation } from 'lucide-react';
 
-// =========================================
-// UTILITÁRIOS MATEMÁTICOS
-// =========================================
-const deg2rad = (deg) => deg * (Math.PI / 180);
+// Imports dos Componentes (Módulos)
+import TimerDisplay from './components/TimerDisplay';
+import LapsList from './components/LapsList';
+import Controls from './components/Controls';
+import SessionNameModal from './components/SessionNameModal';
 
-// Fórmula de Haversine para distância em metros
-const getDistanceFromLatLonInMeters = (lat1, lon1, lat2, lon2) => {
-  const R = 6371e3;
-  const dLat = deg2rad(lat2 - lat1);
-  const dLon = deg2rad(lon2 - lon1);
-  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-            Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
-            Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-};
+// Import da Função Auxiliar
+import { formatTime } from './utils/formatTime';
 
-// =========================================
-// FILTRO DE KALMAN SIMPLIFICADO (1D para Lat/Lon separado)
-// =========================================
-class KalmanFilter {
-  constructor(processNoise = 1, measurementNoise = 10, estimationError = 10, initialValue = 0) {
-    this.Q = processNoise; // Ruído do processo (o quanto confiamos no modelo de movimento)
-    this.R = measurementNoise; // Ruído da medição (incerteza do GPS)
-    this.P = estimationError; // Erro da estimativa atual
-    this.X = initialValue; // Estado atual estimado (posição)
-  }
+// Imports do Firebase
+// CORREÇÃO AQUI: googleProvider deve vir deste arquivo, pois foi criado lá
+import { db, auth, firebaseConfig, googleProvider } from './firebaseConfig'; 
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { 
+  browserSessionPersistence, 
+  onAuthStateChanged, 
+  setPersistence, 
+  signInWithPopup, 
+  // googleProvider, // REMOVIDO DAQUI (Isto causava o erro)
+  signOut 
+} from "firebase/auth";
 
-  update(measurement, accuracy) {
-    // Atualiza o ruído da medição com a precisão real do GPS no momento
-    this.R = accuracy * accuracy; 
-
-    // Previsão (simples: assumimos que ficou parado, movimento entra como ruído Q)
-    this.P = this.P + this.Q;
-
-    // Ganho de Kalman
-    const K = this.P / (this.P + this.R);
-
-    // Atualização do estado com a nova medição
-    this.X = this.X + K * (measurement - this.X);
-
-    // Atualização da covariância do erro
-    this.P = (1 - K) * this.P;
-
-    return this.X;
-  }
-}
-
-// =========================================
-// COMPONENTE PRINCIPAL
-// =========================================
-function App() {
+export default function App() {
+  // --- Estados ---
   const [isRunning, setIsRunning] = useState(false);
   const [timeElapsed, setTimeElapsed] = useState(0);
-  const [distance, setDistance] = useState(0);
-  const [currentSpeed, setCurrentSpeed] = useState(0);
-  const [gpsAccuracy, setGpsAccuracy] = useState(null);
-  const [errorMsg, setErrorMsg] = useState('');
-
-  // Refs para manter estado entre renderizações sem re-render
-  const lastPositionRef = useRef(null);
-  const watchIdRef = useRef(null);
-  const timerRef = useRef(null);
+  const [laps, setLaps] = useState([]);
   
-  // Refs para os filtros de Kalman (um para Latitude, um para Longitude)
-  const latKalmanRef = useRef(new KalmanFilter(3, 10, 10, 0)); 
-  const lonKalmanRef = useRef(new KalmanFilter(3, 10, 10, 0));
-  const isFirstReadingRef = useRef(true);
+  const [isNamingSession, setIsNamingSession] = useState(false);
+  const [sessionName, setSessionName] = useState(null);
+  const [showSaveModal, setShowSaveModal] = useState(false); 
 
-  // Cronômetro
+  const [user, setUser] = useState(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const timerRef = useRef(null);
+
+  // --- Autenticação ---
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser ? currentUser : null);
+      setIsAuthReady(true);
+    });
+    return () => unsubscribeAuth();
+  }, []);
+
+  // --- Lógica do Timer ---
   useEffect(() => {
     if (isRunning) {
-      timerRef.current = setInterval(() => setTimeElapsed(p => p + 1), 1000);
+      timerRef.current = setInterval(() => {
+        setTimeElapsed(prevTime => prevTime + 1);
+      }, 1000);
     } else {
       clearInterval(timerRef.current);
     }
     return () => clearInterval(timerRef.current);
   }, [isRunning]);
 
-  // Geolocalização com Filtro Kalman
-  useEffect(() => {
-    if (isRunning) {
-      if (!navigator.geolocation) return setErrorMsg('Sem suporte a GPS.');
-
-      const success = (pos) => {
-        let { latitude, longitude, accuracy, speed } = pos.coords;
-
-        // 1. Filtro Grosso: Ignora leituras absurdamente ruins (> 60m)
-        if (accuracy > 60) {
-            setGpsAccuracy(accuracy); return; 
-        }
-        
-        setGpsAccuracy(accuracy);
-        setCurrentSpeed(speed || 0);
-
-        // 2. Inicialização dos Filtros na primeira leitura válida
-        if (isFirstReadingRef.current) {
-            latKalmanRef.current = new KalmanFilter(3, accuracy, accuracy, latitude);
-            lonKalmanRef.current = new KalmanFilter(3, accuracy, accuracy, longitude);
-            isFirstReadingRef.current = false;
-            lastPositionRef.current = { latitude, longitude, timestamp: pos.timestamp };
-            return;
-        }
-
-        // 3. Aplica o Filtro de Kalman
-        const smoothLat = latKalmanRef.current.update(latitude, accuracy);
-        const smoothLon = lonKalmanRef.current.update(longitude, accuracy);
-
-        // 4. Cálculo de Distância com dados suavizados
-        if (lastPositionRef.current) {
-          const dist = getDistanceFromLatLonInMeters(
-            lastPositionRef.current.latitude,
-            lastPositionRef.current.longitude,
-            smoothLat,
-            smoothLon
-          );
-
-          // 5. Deadband Dinâmico: Só conta se moveu mais que a "incerteza" atual filtrada
-          // Usei 0.8m como base mínima para tentar pegar passos lentos, mas exigindo consistência.
-          const timeDiff = (pos.timestamp - lastPositionRef.current.timestamp) / 1000;
-          const calculatedSpeed = timeDiff > 0 ? dist / timeDiff : 0;
-
-          // Se moveu > 0.8m E velocidade < 30km/h (para evitar teleportes)
-          if (dist > 0.8 && calculatedSpeed < 8.3) {
-             setDistance(d => d + dist);
-             lastPositionRef.current = { latitude: smoothLat, longitude: smoothLon, timestamp: pos.timestamp };
-          }
-        }
-        setErrorMsg('');
-      };
-
-      const error = (err) => setErrorMsg(err.code === 1 ? 'Permissão negada.' : 'Sinal GPS perdido.');
-
-      watchIdRef.current = navigator.geolocation.watchPosition(success, error, {
-        enableHighAccuracy: true, timeout: 20000, maximumAge: 0
-      });
-
-    } else {
-      // Cleanup ao pausar/parar
-      if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current);
-      lastPositionRef.current = null;
-      isFirstReadingRef.current = true;
+  // --- Handlers ---
+  const handleSaveLap = () => {
+    if (isRunning && timeElapsed > 0) {
+      setLaps(prevLaps => [...prevLaps, timeElapsed]);
     }
-    return () => { if (watchIdRef.current) navigator.geolocation.clearWatch(watchIdRef.current); };
-  }, [isRunning]);
-
-  // Reset total
-  const handleReset = () => {
-    setIsRunning(false); setTimeElapsed(0); setDistance(0);
-    setCurrentSpeed(0); setGpsAccuracy(null); setErrorMsg('');
-    lastPositionRef.current = null; isFirstReadingRef.current = true;
   };
 
-  // Formatação de Tempo HH:MM:SS
-  const formatTime = (totalSeconds) => {
-    const h = Math.floor(totalSeconds / 3600);
-    const m = Math.floor((totalSeconds % 3600) / 60);
-    const s = totalSeconds % 60;
-    return [h, m, s].map(v => v < 10 ? "0" + v : v).join(":");
+  const handleStopRequest = () => {
+    setIsRunning(false);
+    if (timeElapsed > 0) {
+      setShowSaveModal(true);
+    }
   };
 
+  const handleConfirmSave = async () => {
+    if (!user) {
+      alert("Você precisa estar logado para salvar.");
+      setShowSaveModal(false);
+      return;
+    }
+
+    const appId = firebaseConfig.appId || "seu-app-id-padrao"; 
+    const collectionPath = `/registros_cronometro/${appId}/users/${user.uid}/tempos`;
+
+    const newSession = {
+      sessionName: sessionName || "Sessão sem nome",
+      totalTime: timeElapsed,
+      formattedTime: formatTime(timeElapsed),
+      laps: laps.map(lapTime => ({
+        seconds: lapTime,
+        formatted: formatTime(lapTime)
+      })),
+      createdAt: serverTimestamp(),
+      userId: user.uid
+    };
+
+    try {
+      await addDoc(collection(db, collectionPath), newSession);
+      console.log("Sessão salva com sucesso!");
+    } catch (e) {
+      console.error("Erro ao salvar:", e);
+      alert("Erro ao salvar. Verifique suas permissões.");
+    }
+
+    resetTimerState();
+  };
+
+  const handleDiscard = () => {
+    resetTimerState();
+  };
+
+  const resetTimerState = () => {
+    setShowSaveModal(false);
+    setTimeElapsed(0);
+    setLaps([]);
+    setSessionName(null);
+    setIsRunning(false);
+  };
+
+  const handleStartRequest = () => {
+    if (!isRunning && timeElapsed === 0) {
+      setIsNamingSession(true);
+    } else {
+      setIsRunning(true);
+    }
+  };
+
+  const handleConfirmName = (name) => {
+    setSessionName(name);
+    setIsNamingSession(false);
+    setIsRunning(true);
+  };
+
+  const handleCancelName = () => {
+    setIsNamingSession(false);
+  };
+
+  const handleLogin = async () => {
+    try {
+      await setPersistence(auth, browserSessionPersistence);
+      // Agora googleProvider está corretamente importado e definido
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error("Erro login:", error);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error("Erro logout", error);
+    }
+  };
+
+  if (!isAuthReady) return <div className="min-h-screen bg-gray-950 text-gray-100 flex items-center justify-center">Carregando...</div>;
+
+  // --- Renderização da Tela de Login ---
+  if (isAuthReady && !user) {
+    return (
+      <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col items-center justify-center p-8">
+        <h1 className="text-3xl font-bold text-white mb-4">Cronômetro</h1>
+        <button
+          onClick={handleLogin}
+          className="flex items-center justify-center gap-3 bg-white text-gray-800 font-medium px-6 py-3 rounded-lg shadow-lg hover:bg-gray-200 transition-all"
+        >
+          <svg className="w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+            <path fill="none" d="M0 0h48v48H0z"></path>
+          </svg>
+          Fazer Login com Google
+        </button>
+      </div>
+    );
+  }
+
+  // --- Renderização da Aplicação Principal ---
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col font-sans">
-      <div className="p-4 bg-gray-900 border-b border-gray-800 text-center">
-        <h1 className="text-lg font-bold text-blue-400 tracking-widest uppercase">Rastreador Pro V2</h1>
+    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col font-sans relative">
+      {/* Header */}
+      <div className="p-4 bg-gray-900 border-b border-gray-800 flex justify-between items-center shadow-md">
+        <div className="w-16"></div>
+        <h1 className="text-lg font-bold text-blue-400 tracking-widest uppercase truncate max-w-[200px] text-center">
+          {sessionName ? sessionName : "Cronômetro"}
+        </h1>
+        <button onClick={handleLogout} className="text-xs text-red-400 border border-red-900 px-3 py-1 rounded hover:bg-red-900/30 transition-colors">
+          Sair
+        </button>
       </div>
 
-      <div className="flex-1 flex flex-col items-center p-6 space-y-8">
-        {errorMsg && <div className="bg-red-900/50 text-red-200 p-2 rounded text-sm">{errorMsg}</div>}
-
-        {/* Círculo Principal de Distância */}
-        <div className="relative flex flex-col items-center justify-center w-72 h-72 rounded-full bg-gradient-to-br from-gray-900 to-black border-4 border-gray-800 shadow-2xl">
-          <MapPin className="w-8 h-8 text-emerald-500 opacity-70 mb-1" />
-          
-          {/* Exibição com Metros e Centímetros */}
-          <span className="text-6xl font-bold font-mono tracking-tighter">
-            {distance < 1000 
-              ? distance.toFixed(2) // Mostra 2 casas decimais (centímetros)
-              : (distance / 1000).toFixed(3) // Mostra 3 casas para KM (metros)
-            }
-          </span>
-          <span className="text-gray-400 text-xl uppercase mt-2 font-medium">
-            {distance < 1000 ? 'Metros' : 'KM'}
-          </span>
-
-          {isRunning && (
-            <div className="absolute inset-0 rounded-full border-4 border-t-emerald-500/80 border-r-emerald-500/20 border-b-transparent border-l-transparent animate-spin [animation-duration:3s]"></div>
-          )}
-        </div>
-
-        {/* Cards de Métricas Secundárias */}
-        <div className="grid grid-cols-2 gap-4 w-full max-w-sm">
-          <div className="bg-gray-900 p-4 rounded-2xl border border-gray-800 flex flex-col items-center">
-            <Clock className="text-blue-500 w-6 h-6 mb-2" />
-            <span className="text-2xl font-mono font-bold">{formatTime(timeElapsed)}</span>
-            <span className="text-xs text-gray-500 uppercase">Tempo</span>
-          </div>
-          <div className="bg-gray-900 p-4 rounded-2xl border border-gray-800 flex flex-col items-center">
-            <Navigation className="text-purple-500 w-6 h-6 mb-2" />
-            <span className="text-2xl font-mono font-bold">{(currentSpeed * 3.6).toFixed(1)}</span>
-            <span className="text-xs text-gray-500 uppercase">km/h</span>
-          </div>
-        </div>
-
-        {/* Indicador de Precisão */}
-        {gpsAccuracy !== null && isRunning && (
-          <div className="flex items-center space-x-2 bg-gray-900 px-3 py-1.5 rounded-full text-xs font-medium text-gray-400 border border-gray-800">
-            <div className={`w-2.5 h-2.5 rounded-full ${gpsAccuracy < 10 ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : gpsAccuracy < 30 ? 'bg-yellow-500' : 'bg-red-500'}`} />
-            <span>Precisão: ±{gpsAccuracy.toFixed(1)}m</span>
-          </div>
-        )}
+      {/* Área Principal */}
+      <div className="flex-1 flex flex-col items-center p-6 space-y-6 overflow-hidden">
+        <TimerDisplay timeElapsed={timeElapsed} isRunning={isRunning} />
+        
+        {/* Aqui usamos o componente LapsList que criamos */}
+        <LapsList laps={laps} />
       </div>
 
       {/* Controles */}
-      <div className="bg-gray-900 p-6 rounded-t-[2.5rem] shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.5)]">
-        <div className="flex items-center justify-center gap-6">
-           {!isRunning ? (
-            <button onClick={() => { setErrorMsg('Aguardando GPS...'); setIsRunning(true); }} className="w-20 h-20 bg-emerald-600 hover:bg-emerald-500 active:scale-95 rounded-full flex items-center justify-center shadow-lg shadow-emerald-900/30 transition-all">
-              <Play fill="white" size={36} className="ml-2" />
-            </button>
-           ) : (
-            <button onClick={() => setIsRunning(false)} className="w-20 h-20 bg-amber-500 hover:bg-amber-400 active:scale-95 rounded-full flex items-center justify-center shadow-lg shadow-amber-900/30 transition-all">
-              <Pause fill="white" size={36} />
-            </button>
-           )}
-           <button onClick={handleReset} disabled={isRunning && timeElapsed === 0} className="w-14 h-14 bg-gray-800 hover:bg-gray-700 disabled:opacity-30 disabled:pointer-events-none active:scale-95 rounded-full flex items-center justify-center border border-gray-700 transition-all">
-             <Square fill="white" size={20} />
-           </button>
+      <Controls
+        isRunning={isRunning}
+        timeElapsed={timeElapsed}
+        onStart={handleStartRequest}
+        onPause={() => setIsRunning(false)}
+        onReset={handleStopRequest} 
+        onSaveLap={handleSaveLap}
+      />
+
+      {/* Modais */}
+      {isNamingSession && (
+        <SessionNameModal
+          onConfirm={handleConfirmName}
+          onCancel={handleCancelName}
+        />
+      )}
+
+      {showSaveModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl transform transition-all scale-100">
+            <div className="text-center mb-6">
+              <h2 className="text-xl font-bold text-white mb-2">Finalizar Sessão?</h2>
+              <p className="text-gray-400 text-sm">
+                Deseja salvar o registro de <strong>{sessionName || "Cronômetro"}</strong>?
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={handleDiscard} className="flex-1 py-3 px-4 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl font-medium border border-gray-700">
+                Descartar
+              </button>
+              <button onClick={handleConfirmSave} className="flex-1 py-3 px-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold shadow-lg">
+                Salvar
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
-
-export default App;
