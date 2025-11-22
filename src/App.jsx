@@ -1,17 +1,16 @@
 // src/App.jsx
 import React, { useState, useEffect, useRef } from 'react';
 
-// Imports dos Componentes (Módulos)
+// Componentes (Módulos)
 import TimerDisplay from './components/TimerDisplay';
 import LapsList from './components/LapsList';
 import Controls from './components/Controls';
 import SessionNameModal from './components/SessionNameModal';
+import Menu from './components/Menu';      // NOVO
+import History from './components/History'; // NOVO
 
-// Import da Função Auxiliar
+// Utilitários e Firebase
 import { formatTime } from './utils/formatTime';
-
-// Imports do Firebase
-// CORREÇÃO AQUI: googleProvider deve vir deste arquivo, pois foi criado lá
 import { db, auth, firebaseConfig, googleProvider } from './firebaseConfig'; 
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { 
@@ -19,22 +18,25 @@ import {
   onAuthStateChanged, 
   setPersistence, 
   signInWithPopup, 
-  // googleProvider, // REMOVIDO DAQUI (Isto causava o erro)
   signOut 
 } from "firebase/auth";
 
 export default function App() {
-  // --- Estados ---
+  // --- Estados Globais ---
+  const [user, setUser] = useState(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [currentView, setCurrentView] = useState('timer'); // 'timer' ou 'history'
+
+  // --- Estados do Cronômetro ---
   const [isRunning, setIsRunning] = useState(false);
   const [timeElapsed, setTimeElapsed] = useState(0);
   const [laps, setLaps] = useState([]);
   
+  // --- Estados de UI do Cronômetro ---
   const [isNamingSession, setIsNamingSession] = useState(false);
   const [sessionName, setSessionName] = useState(null);
   const [showSaveModal, setShowSaveModal] = useState(false); 
 
-  const [user, setUser] = useState(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
   const timerRef = useRef(null);
 
   // --- Autenticação ---
@@ -58,7 +60,7 @@ export default function App() {
     return () => clearInterval(timerRef.current);
   }, [isRunning]);
 
-  // --- Handlers ---
+  // --- Handlers do Cronômetro ---
   const handleSaveLap = () => {
     if (isRunning && timeElapsed > 0) {
       setLaps(prevLaps => [...prevLaps, timeElapsed]);
@@ -74,13 +76,13 @@ export default function App() {
 
   const handleConfirmSave = async () => {
     if (!user) {
-      alert("Você precisa estar logado para salvar.");
+      alert("Precisa de estar autenticado para salvar.");
       setShowSaveModal(false);
       return;
     }
 
     const appId = firebaseConfig.appId || "seu-app-id-padrao"; 
-    const collectionPath = `/registros_cronometro/${appId}/users/${user.uid}/tempos`;
+    const collectionPath = `registros_cronometro/${appId}/users/${user.uid}/tempos`;
 
     const newSession = {
       sessionName: sessionName || "Sessão sem nome",
@@ -97,9 +99,11 @@ export default function App() {
     try {
       await addDoc(collection(db, collectionPath), newSession);
       console.log("Sessão salva com sucesso!");
+      // Opcional: Mudar automaticamente para o histórico após salvar
+      // setCurrentView('history'); 
     } catch (e) {
       console.error("Erro ao salvar:", e);
-      alert("Erro ao salvar. Verifique suas permissões.");
+      alert("Erro ao salvar. Verifique as permissões.");
     }
 
     resetTimerState();
@@ -135,10 +139,10 @@ export default function App() {
     setIsNamingSession(false);
   };
 
+  // --- Handlers de Auth ---
   const handleLogin = async () => {
     try {
       await setPersistence(auth, browserSessionPersistence);
-      // Agora googleProvider está corretamente importado e definido
       await signInWithPopup(auth, googleProvider);
     } catch (error) {
       console.error("Erro login:", error);
@@ -153,13 +157,16 @@ export default function App() {
     }
   };
 
-  if (!isAuthReady) return <div className="min-h-screen bg-gray-950 text-gray-100 flex items-center justify-center">Carregando...</div>;
+  if (!isAuthReady) return <div className="min-h-screen bg-gray-950 text-gray-100 flex items-center justify-center">A carregar...</div>;
 
-  // --- Renderização da Tela de Login ---
+  // --- Tela de Login (Se não autenticado) ---
   if (isAuthReady && !user) {
     return (
       <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col items-center justify-center p-8">
         <h1 className="text-3xl font-bold text-white mb-4">Cronômetro</h1>
+        <p className="text-gray-400 mb-8 text-center max-w-xs">
+          Faça login para aceder ao cronômetro e salvar as suas tarefas.
+        </p>
         <button
           onClick={handleLogin}
           className="flex items-center justify-center gap-3 bg-white text-gray-800 font-medium px-6 py-3 rounded-lg shadow-lg hover:bg-gray-200 transition-all"
@@ -171,43 +178,60 @@ export default function App() {
             <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
             <path fill="none" d="M0 0h48v48H0z"></path>
           </svg>
-          Fazer Login com Google
+          Entrar com Google
         </button>
       </div>
     );
   }
 
-  // --- Renderização da Aplicação Principal ---
+  // --- Tela Principal ---
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col font-sans relative">
-      {/* Header */}
-      <div className="p-4 bg-gray-900 border-b border-gray-800 flex justify-between items-center shadow-md">
-        <div className="w-16"></div>
-        <h1 className="text-lg font-bold text-blue-400 tracking-widest uppercase truncate max-w-[200px] text-center">
-          {sessionName ? sessionName : "Cronômetro"}
-        </h1>
-        <button onClick={handleLogout} className="text-xs text-red-400 border border-red-900 px-3 py-1 rounded hover:bg-red-900/30 transition-colors">
-          Sair
-        </button>
-      </div>
-
-      {/* Área Principal */}
-      <div className="flex-1 flex flex-col items-center p-6 space-y-6 overflow-hidden">
-        <TimerDisplay timeElapsed={timeElapsed} isRunning={isRunning} />
-        
-        {/* Aqui usamos o componente LapsList que criamos */}
-        <LapsList laps={laps} />
-      </div>
-
-      {/* Controles */}
-      <Controls
-        isRunning={isRunning}
-        timeElapsed={timeElapsed}
-        onStart={handleStartRequest}
-        onPause={() => setIsRunning(false)}
-        onReset={handleStopRequest} 
-        onSaveLap={handleSaveLap}
+    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col font-sans relative overflow-hidden">
+      
+      {/* Menu Hambúrguer */}
+      <Menu 
+        currentView={currentView} 
+        onViewChange={setCurrentView} 
+        onLogout={handleLogout}
       />
+
+      {/* Header (Título) - Ajustado para dar espaço ao botão hambúrguer */}
+      <div className="p-4 bg-gray-900 border-b border-gray-800 flex justify-center items-center shadow-md h-16">
+        <h1 className="text-lg font-bold text-blue-400 tracking-widest uppercase truncate max-w-[200px]">
+          {currentView === 'timer' ? (sessionName || "Cronômetro") : "Tarefas Salvas"}
+        </h1>
+      </div>
+
+      {/* Área de Conteúdo */}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden relative">
+        
+        {/* TELA DO CRONÔMETRO 
+            Usamos 'hidden' em vez de remover do DOM para manter o timer a contar 
+            mesmo quando o utilizador está a ver o histórico.
+        */}
+        <div className={`flex flex-col items-center p-6 space-y-6 min-h-full ${currentView === 'timer' ? 'block' : 'hidden'}`}>
+          <TimerDisplay timeElapsed={timeElapsed} isRunning={isRunning} />
+          <LapsList laps={laps} />
+        </div>
+
+        {/* TELA DO HISTÓRICO */}
+        <div className={`p-4 min-h-full ${currentView === 'history' ? 'block' : 'hidden'}`}>
+          <History user={user} />
+        </div>
+
+      </div>
+
+      {/* Controles (Apenas aparecem na tela do Timer) */}
+      {currentView === 'timer' && (
+        <Controls
+          isRunning={isRunning}
+          timeElapsed={timeElapsed}
+          onStart={handleStartRequest}
+          onPause={() => setIsRunning(false)}
+          onReset={handleStopRequest} 
+          onSaveLap={handleSaveLap}
+        />
+      )}
 
       {/* Modais */}
       {isNamingSession && (
@@ -223,14 +247,14 @@ export default function App() {
             <div className="text-center mb-6">
               <h2 className="text-xl font-bold text-white mb-2">Finalizar Sessão?</h2>
               <p className="text-gray-400 text-sm">
-                Deseja salvar o registro de <strong>{sessionName || "Cronômetro"}</strong>?
+                Deseja salvar o registo de <strong>{sessionName || "Cronômetro"}</strong>?
               </p>
             </div>
             <div className="flex gap-3">
-              <button onClick={handleDiscard} className="flex-1 py-3 px-4 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl font-medium border border-gray-700">
+              <button onClick={handleDiscard} className="flex-1 py-3 px-4 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl font-medium border border-gray-700 transition-colors">
                 Descartar
               </button>
-              <button onClick={handleConfirmSave} className="flex-1 py-3 px-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold shadow-lg">
+              <button onClick={handleConfirmSave} className="flex-1 py-3 px-4 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold shadow-lg transition-colors">
                 Salvar
               </button>
             </div>
