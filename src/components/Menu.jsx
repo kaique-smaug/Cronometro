@@ -1,6 +1,7 @@
 // src/components/Menu.jsx
 import React, { useState } from 'react';
 
+// Removemos 'savedCount' das props
 const Menu = ({ currentView, onViewChange, onLogout }) => {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -8,12 +9,11 @@ const Menu = ({ currentView, onViewChange, onLogout }) => {
 
   const handleNavigation = (view) => {
     onViewChange(view);
-    setIsOpen(false); // Fecha o menu ao navegar
+    setIsOpen(false);
   };
 
   return (
     <>
-      {/* Botão Hambúrguer (Topo Esquerdo) */}
       <button 
         onClick={toggleMenu}
         className="absolute top-4 left-4 z-50 p-2 text-gray-400 hover:text-white focus:outline-none"
@@ -23,7 +23,6 @@ const Menu = ({ currentView, onViewChange, onLogout }) => {
         </svg>
       </button>
 
-      {/* Overlay Escuro (Fundo) */}
       {isOpen && (
         <div 
           className="fixed inset-0 bg-black/80 backdrop-blur-sm z-40"
@@ -31,7 +30,6 @@ const Menu = ({ currentView, onViewChange, onLogout }) => {
         />
       )}
 
-      {/* Barra Lateral (Sidebar) */}
       <div className={`fixed top-0 left-0 h-full w-64 bg-gray-900 border-r border-gray-800 z-50 transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-6 border-b border-gray-800 flex justify-between items-center">
           <h2 className="text-xl font-bold text-blue-400 uppercase tracking-widest">Menu</h2>
@@ -60,6 +58,7 @@ const Menu = ({ currentView, onViewChange, onLogout }) => {
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
             </svg>
+            {/* CORRIGIDO: Texto fixo sem variáveis */}
             Tarefas Salvas
           </button>
         </nav>

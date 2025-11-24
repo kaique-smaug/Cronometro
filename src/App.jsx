@@ -1,13 +1,13 @@
 // src/App.jsx
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react'; // <--- ESTA LINHA ESTAVA FALTANDO
 
 // Componentes (Módulos)
 import TimerDisplay from './components/TimerDisplay';
 import LapsList from './components/LapsList';
 import Controls from './components/Controls';
 import SessionNameModal from './components/SessionNameModal';
-import Menu from './components/Menu';      // NOVO
-import History from './components/History'; // NOVO
+import Menu from './components/Menu';
+import History from './components/History';
 
 // Utilitários e Firebase
 import { formatTime } from './utils/formatTime';
@@ -25,8 +25,8 @@ export default function App() {
   // --- Estados Globais ---
   const [user, setUser] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
-  const [currentView, setCurrentView] = useState('timer'); // 'timer' ou 'history'
-
+  const [currentView, setCurrentView] = useState('timer'); 
+  
   // --- Estados do Cronômetro ---
   const [isRunning, setIsRunning] = useState(false);
   const [timeElapsed, setTimeElapsed] = useState(0);
@@ -99,8 +99,6 @@ export default function App() {
     try {
       await addDoc(collection(db, collectionPath), newSession);
       console.log("Sessão salva com sucesso!");
-      // Opcional: Mudar automaticamente para o histórico após salvar
-      // setCurrentView('history'); 
     } catch (e) {
       console.error("Erro ao salvar:", e);
       alert("Erro ao salvar. Verifique as permissões.");
@@ -159,7 +157,6 @@ export default function App() {
 
   if (!isAuthReady) return <div className="min-h-screen bg-gray-950 text-gray-100 flex items-center justify-center">A carregar...</div>;
 
-  // --- Tela de Login (Se não autenticado) ---
   if (isAuthReady && !user) {
     return (
       <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col items-center justify-center p-8">
@@ -171,20 +168,12 @@ export default function App() {
           onClick={handleLogin}
           className="flex items-center justify-center gap-3 bg-white text-gray-800 font-medium px-6 py-3 rounded-lg shadow-lg hover:bg-gray-200 transition-all"
         >
-          <svg className="w-6 h-6" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
-            <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-            <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-            <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-            <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-            <path fill="none" d="M0 0h48v48H0z"></path>
-          </svg>
           Entrar com Google
         </button>
       </div>
     );
   }
 
-  // --- Tela Principal ---
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col font-sans relative overflow-hidden">
       
@@ -195,7 +184,7 @@ export default function App() {
         onLogout={handleLogout}
       />
 
-      {/* Header (Título) - Ajustado para dar espaço ao botão hambúrguer */}
+      {/* Header */}
       <div className="p-4 bg-gray-900 border-b border-gray-800 flex justify-center items-center shadow-md h-16">
         <h1 className="text-lg font-bold text-blue-400 tracking-widest uppercase truncate max-w-[200px]">
           {currentView === 'timer' ? (sessionName || "Cronômetro") : "Tarefas Salvas"}
@@ -205,23 +194,17 @@ export default function App() {
       {/* Área de Conteúdo */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden relative">
         
-        {/* TELA DO CRONÔMETRO 
-            Usamos 'hidden' em vez de remover do DOM para manter o timer a contar 
-            mesmo quando o utilizador está a ver o histórico.
-        */}
         <div className={`flex flex-col items-center p-6 space-y-6 min-h-full ${currentView === 'timer' ? 'block' : 'hidden'}`}>
           <TimerDisplay timeElapsed={timeElapsed} isRunning={isRunning} />
           <LapsList laps={laps} />
         </div>
 
-        {/* TELA DO HISTÓRICO */}
         <div className={`p-4 min-h-full ${currentView === 'history' ? 'block' : 'hidden'}`}>
           <History user={user} />
         </div>
 
       </div>
 
-      {/* Controles (Apenas aparecem na tela do Timer) */}
       {currentView === 'timer' && (
         <Controls
           isRunning={isRunning}
@@ -233,7 +216,6 @@ export default function App() {
         />
       )}
 
-      {/* Modais */}
       {isNamingSession && (
         <SessionNameModal
           onConfirm={handleConfirmName}
