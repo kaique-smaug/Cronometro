@@ -1,12 +1,17 @@
 // src/components/History.jsx
 import React, { useEffect, useState } from 'react';
-import { collection, query, orderBy, onSnapshot } from "firebase/firestore";
+import { collection, query, orderBy, onSnapshot, deleteDoc, doc } from "firebase/firestore";
 import { db, firebaseConfig } from '../firebaseConfig';
-import * as XLSX from 'xlsx';
+import { downloadSessionExcel } from '../utils/excelHandler'; 
+// Removemos a importação de deleteSession pois faremos a lógica aqui para controlar o modal
 
 const History = ({ user }) => {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Estados para o Modal de Exclusão
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [sessionToDelete, setSessionToDelete] = useState(null);
 
   useEffect(() => {
     if (!user) return;
@@ -31,7 +36,35 @@ const History = ({ user }) => {
     return () => unsubscribe();
   }, [user]);
 
-  const formatDate = (timestamp) => {
+  // --- Handlers do Modal ---
+  const handleDeleteClick = (sessionId) => {
+    setSessionToDelete(sessionId);
+    setShowDeleteModal(true);
+  };
+
+  const handleCancelDelete = () => {
+    setShowDeleteModal(false);
+    setSessionToDelete(null);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!sessionToDelete) return;
+
+    try {
+      const appId = firebaseConfig.appId || "seu-app-id-padrao";
+      const docRef = doc(db, `registros_cronometro/${appId}/users/${user.uid}/tempos`, sessionToDelete);
+      
+      await deleteDoc(docRef);
+      // Sucesso
+    } catch (error) {
+      console.error("Erro ao excluir tarefa:", error);
+      alert("Erro ao excluir tarefa. Verifique sua conexão.");
+    } finally {
+      handleCancelDelete(); // Fecha o modal
+    }
+  };
+
+  const formatDateForDisplay = (timestamp) => {
     if (!timestamp) return "Data desconhecida";
     return new Date(timestamp.seconds * 1000).toLocaleString('pt-PT', {
       day: '2-digit',
@@ -40,36 +73,6 @@ const History = ({ user }) => {
       hour: '2-digit',
       minute: '2-digit'
     });
-  };
-
-  // --- Função para Baixar Excel ---
-  const handleDownloadExcel = (session) => {
-    const wb = XLSX.utils.book_new();
-    
-    const headerInfo = [
-      ["Relatório de Tarefa"],
-      ["Nome", session.sessionName],
-      ["Data", formatDate(session.createdAt)],
-      ["Tempo Total", session.formattedTime],
-      [], 
-      ["Volta Nº", "Tempo"] 
-    ];
-
-    const lapsData = session.laps 
-      ? session.laps.map((lap, index) => {
-          const tempo = typeof lap === 'object' ? (lap.formatted || '-') : lap;
-          return [ index + 1, tempo ];
-        })
-      : [["-", "-"]];
-
-    const wsData = [...headerInfo, ...lapsData];
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    ws['!cols'] = [{ wch: 15 }, { wch: 20 }];
-
-    XLSX.utils.book_append_sheet(wb, ws, "Relatório");
-
-    const safeName = session.sessionName.replace(/[^a-z0-9]/gi, '_') || 'tarefa';
-    XLSX.writeFile(wb, `${safeName}.xlsx`);
   };
 
   if (loading) {
@@ -81,7 +84,7 @@ const History = ({ user }) => {
   }
 
   return (
-    <div className="w-full max-w-3xl mx-auto p-4 pb-24">
+    <div className="w-full max-w-3xl mx-auto p-4 pb-24 relative">
       <h2 className="text-2xl font-bold text-white mb-6 text-center uppercase tracking-widest">
         Histórico de Tarefas
       </h2>
@@ -101,7 +104,7 @@ const History = ({ user }) => {
                     {session.sessionName}
                   </h3>
                   <p className="text-xs text-gray-500 uppercase tracking-wide">
-                    {formatDate(session.createdAt)}
+                    {formatDateForDisplay(session.createdAt)}
                   </p>
                 </div>
                 <div className="text-right">
@@ -126,10 +129,24 @@ const History = ({ user }) => {
                 </div>
               )}
 
-              {/* BOTÃO ÚNICO DE AÇÃO */}
-              <div className="mt-4 pt-3 border-t border-gray-800/30 flex justify-end">
+              {/* BOTÕES DE AÇÃO */}
+              <div className="mt-4 pt-3 border-t border-gray-800/30 flex flex-col-reverse sm:flex-row justify-end gap-3">
+                
+                {/* Botão Excluir */}
                 <button
-                  onClick={() => handleDownloadExcel(session)}
+                  onClick={() => handleDeleteClick(session.id)}
+                  className="flex items-center justify-center gap-2 bg-red-900/20 hover:bg-red-900/40 text-red-400 border border-red-900/50 px-4 py-2 rounded-lg text-sm font-medium transition-colors w-full sm:w-auto"
+                  title="Excluir Tarefa"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                  Excluir
+                </button>
+
+                {/* Botão Excel */}
+                <button
+                  onClick={() => downloadSessionExcel(session)}
                   className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-lg shadow-green-900/20 w-full sm:w-auto"
                   title="Baixar arquivo .xlsx para o computador"
                 >
@@ -142,6 +159,34 @@ const History = ({ user }) => {
 
             </div>
           ))}
+        </div>
+      )}
+
+      {/* MODAL DE CONFIRMAÇÃO DE EXCLUSÃO */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl transform transition-all scale-100">
+            <div className="text-center mb-6">
+              <h2 className="text-xl font-bold text-white mb-2">Excluir Tarefa?</h2>
+              <p className="text-gray-400 text-sm">
+                Tem certeza que deseja excluir esta tarefa permanentemente? Essa ação não pode ser desfeita.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={handleCancelDelete}
+                className="flex-1 py-3 px-4 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl font-medium border border-gray-700 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleConfirmDelete}
+                className="flex-1 py-3 px-4 bg-red-600 hover:bg-red-500 text-white rounded-xl font-bold shadow-lg transition-colors"
+              >
+                Excluir
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
