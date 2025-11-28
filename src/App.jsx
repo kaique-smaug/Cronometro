@@ -68,7 +68,7 @@ export default function App() {
   };
 
   const handleCancelName = () => setIsNamingSession(false);
-
+  
   const handleStopRequest = () => {
     actions.stop(); // Para o tempo
     if (activeCar.time > 0) {
@@ -88,15 +88,28 @@ export default function App() {
 
     const finalSessionName = activeCar.taskName || `Carro ${activeCarId} - Sem Título`;
 
+    let timePrevius =  0;
+    const processTime = activeCar.laps.map((lapTime) => {
+      const interval = lapTime - timePrevius
+      timePrevius = lapTime
+
+      return {
+        seconds: lapTime == 0 ? 0 : lapTime,
+        formatted: formatTime(lapTime == 0 ? 0 : lapTime),
+        // Salvamos o intervalo formatado corretamente aqui
+        intervalFormatted: formatTime(interval) 
+      };
+
+    });
+    
+    console.log(processTime)
+
     const newSession = {
       sessionName: finalSessionName,
       carId: activeCarId,
       totalTime: activeCar.time,
       formattedTime: formatTime(activeCar.time),
-      laps: activeCar.laps.map(lapTime => ({
-        seconds: lapTime,
-        formatted: formatTime(lapTime)
-      })),
+      laps: processTime,
       createdAt: serverTimestamp(),
       userId: user.uid
     };
