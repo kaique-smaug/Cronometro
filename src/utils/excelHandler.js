@@ -29,9 +29,7 @@ export const downloadSessionExcel = (session) => {
     [], 
     ["Caixa Nº", "Tempo Acumulado", "Intervalo de Tempo"] 
   ];
-
-  let previousSeconds = 0; 
-
+  
   // Calculamos as linhas
   let timePevius = 0 
     const lapsData = session.laps 

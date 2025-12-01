@@ -4,7 +4,7 @@ const CarTabs = ({ activeCarId, onSelectCar, cars }) => {
   const carList = Object.values(cars);
 
   return (
-    <div className="flex w-full max-w-md bg-gray-900 rounded-xl p-1 mb-6 border border-gray-800 flex-wrap scrollbar-hide gap-1">
+    <div className="flex flex-wrap w-full max-w-md bg-gray-900 rounded-xl p-1 mb-6 border border-gray-800 gap-1">
       {carList.map((car) => {
         const isActive = activeCarId === car.id;
         
@@ -18,12 +18,13 @@ const CarTabs = ({ activeCarId, onSelectCar, cars }) => {
                 : 'text-gray-400 hover:text-white hover:bg-gray-800'
             }`}
           >
-            {/* Indicador de "Rodando" */}
-            {car.isRunning && (
-              <span className="absolute top-1 right-1 w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-            )}
+            {/* CORREÇÃO: Removido 'animate-pulse' para o ponto ficar estático (sem piscar) */}
+            <span 
+              className={`absolute top-1 right-1 w-2 h-2 bg-green-500 rounded-full transition-opacity duration-200 ${
+                car.isRunning ? 'opacity-100' : 'opacity-0'
+              }`}
+            ></span>
             
-            {/* CORREÇÃO: Envolver o texto em um span evita o erro de "Node not found" */}
             <span>{car.name}</span>
           </button>
         );
