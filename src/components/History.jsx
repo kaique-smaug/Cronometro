@@ -1,42 +1,76 @@
 // src/components/History.jsx
 import React, { useEffect, useState } from 'react';
-import { collection, query, orderBy, onSnapshot, deleteDoc, doc } from "firebase/firestore";
+// REMOVIDO: 'orderBy' da importação, pois faremos via JS
+import { collection, query, onSnapshot, deleteDoc, doc, collectionGroup } from "firebase/firestore";
 import { db, firebaseConfig } from '../firebaseConfig';
 import { downloadSessionExcel } from '../utils/excelHandler'; 
+
+// LISTA DE E-MAILS ADMINS
+const ADMIN_EMAILS = [
+  "kaiqueramos826@gmail.com",
+  "ricsoja@gmail.com"
+];
 
 const History = ({ user }) => {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   
-  // Estados de Filtro e Modal
   const [filterDate, setFilterDate] = useState('');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [sessionToDelete, setSessionToDelete] = useState(null);
 
+  const [viewMode, setViewMode] = useState('mine'); 
+  const isAdmin = user && ADMIN_EMAILS.includes(user.email);
+
   useEffect(() => {
     if (!user) return;
+    setLoading(true);
 
-    const appId = firebaseConfig.appId || "seu-app-id-padrao";
-    const collectionPath = `registros_cronometro/${appId}/users/${user.uid}/tempos`;
-    
-    const q = query(collection(db, collectionPath), orderBy("createdAt", "desc"));
+    let q;
+
+    if (viewMode === 'all' && isAdmin) {
+      // TRUQUE: Removemos o orderBy daqui. 
+      // O collectionGroup sem ordenação geralmente não pede índice composto.
+      q = query(collectionGroup(db, 'tempos'));
+    } else {
+      const appId = firebaseConfig.appId || "seu-app-id-padrao";
+      const collectionPath = `registros_cronometro/${appId}/users/${user.uid}/tempos`;
+      // Para a busca local, o orderBy geralmente funciona sem índice, 
+      // mas podemos tirar também para padronizar.
+      q = query(collection(db, collectionPath));
+    }
 
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
       const fetchedSessions = [];
       querySnapshot.forEach((doc) => {
-        fetchedSessions.push({ id: doc.id, ...doc.data() });
+        fetchedSessions.push({ 
+          id: doc.id, 
+          refPath: doc.ref.path, 
+          ...doc.data() 
+        });
       });
+
+      // ORDENAÇÃO VIA JAVASCRIPT (CLIENT-SIDE)
+      // Ordena do mais recente para o mais antigo baseando-se nos segundos do Timestamp
+      fetchedSessions.sort((a, b) => {
+        const timeA = a.createdAt?.seconds || 0;
+        const timeB = b.createdAt?.seconds || 0;
+        return timeB - timeA; // Decrescente
+      });
+
       setSessions(fetchedSessions);
       setLoading(false);
     }, (error) => {
       console.error("Erro ao buscar histórico:", error);
+      if (error.code === 'failed-precondition') {
+        alert("Erro de permissão ou índice. Verifique o console.");
+      }
       setLoading(false);
     });
 
     return () => unsubscribe();
-  }, [user]);
+  }, [user, viewMode, isAdmin]);
 
-  // --- Filtro de Data ---
   const filteredSessions = sessions.filter(session => {
     if (!filterDate) return true;
     if (!session.createdAt) return false;
@@ -53,9 +87,8 @@ const History = ({ user }) => {
     return sessionDateStr === filterDate;
   });
 
-  // --- Handlers ---
-  const handleDeleteClick = (sessionId) => {
-    setSessionToDelete(sessionId);
+  const handleDeleteClick = (session) => {
+    setSessionToDelete(session); 
     setShowDeleteModal(true);
   };
 
@@ -68,13 +101,18 @@ const History = ({ user }) => {
     if (!sessionToDelete) return;
 
     try {
-      const appId = firebaseConfig.appId || "seu-app-id-padrao";
-      const docRef = doc(db, `registros_cronometro/${appId}/users/${user.uid}/tempos`, sessionToDelete);
+      let docRef;
+      if (viewMode === 'all') {
+        docRef = doc(db, sessionToDelete.refPath);
+      } else {
+        const appId = firebaseConfig.appId || "seu-app-id-padrao";
+        docRef = doc(db, `registros_cronometro/${appId}/users/${user.uid}/tempos`, sessionToDelete.id);
+      }
       
       await deleteDoc(docRef);
     } catch (error) {
       console.error("Erro ao excluir tarefa:", error);
-      alert("Erro ao excluir tarefa. Verifique sua conexão.");
+      alert("Erro ao excluir tarefa.");
     } finally {
       handleCancelDelete();
     }
@@ -101,9 +139,31 @@ const History = ({ user }) => {
 
   return (
     <div className="w-full max-w-3xl mx-auto p-4 pb-24 relative">
-      <h2 className="text-2xl font-bold text-white mb-2 text-center uppercase tracking-widest">
+      <h2 className="text-2xl font-bold text-white mb-6 text-center uppercase tracking-widest">
         Histórico de Tarefas
       </h2>
+
+      {/* Painel Admin */}
+      {isAdmin && (
+        <div className="flex justify-center mb-6 bg-gray-900/50 p-1 rounded-lg border border-gray-800 w-fit mx-auto">
+          <button
+            onClick={() => setViewMode('mine')}
+            className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${
+              viewMode === 'mine' ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            Meus Registros
+          </button>
+          <button
+            onClick={() => setViewMode('all')}
+            className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${
+              viewMode === 'all' ? 'bg-purple-600 text-white' : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            Ver Tudo (Admin)
+          </button>
+        </div>
+      )}
 
       {/* Filtro de Data */}
       <div className="flex justify-center items-center gap-3 mb-6">
@@ -131,19 +191,21 @@ const History = ({ user }) => {
         <div className="text-center py-12 bg-gray-900/50 rounded-2xl border border-gray-800">
           <p className="text-gray-500 mb-2">Nenhuma tarefa salva ainda.</p>
         </div>
-      ) : filteredSessions.length === 0 ? (
-        <div className="text-center py-12 bg-gray-900/50 rounded-2xl border border-gray-800 border-dashed">
-          <p className="text-gray-400 mb-2 font-medium">Nenhuma tarefa encontrada nesta data.</p>
-          <button onClick={() => setFilterDate('')} className="text-sm text-blue-400 hover:text-blue-300 underline">Limpar filtro</button>
-        </div>
       ) : (
         <div className="space-y-4">
           {filteredSessions.map((session) => (
-            <div key={session.id} className="bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-gray-700 transition-all shadow-sm relative group">
+            <div key={session.id} className={`bg-gray-900 border rounded-xl p-5 hover:border-gray-700 transition-all shadow-sm relative group ${viewMode === 'all' ? 'border-purple-900/50' : 'border-gray-800'}`}>
               
-              {/* Cabeçalho do Card */}
               <div className="flex justify-between items-start mb-4">
                 <div>
+                  {viewMode === 'all' && (
+                    <div className="mb-1">
+                      <span className="text-xs bg-purple-900 text-purple-200 px-2 py-0.5 rounded font-bold">
+                        {session.userName || session.userEmail || "Usuário"}
+                      </span>
+                    </div>
+                  )}
+                  
                   <h3 className="text-lg font-bold text-blue-400 mb-1">
                     {session.sessionName}
                   </h3>
@@ -159,24 +221,19 @@ const History = ({ user }) => {
                 </div>
               </div>
 
-              {/* LISTA DE VOLTAS (Alterado para layout de Lista Vertical) */}
               {session.laps && session.laps.length > 0 && (
                 <div className="mt-4 border-t border-gray-800/50 pt-2">
                   <div className="flex flex-col divide-y divide-gray-800/50 max-h-60 overflow-y-auto custom-scrollbar pr-2">
                     {session.laps.map((lap, idx) => (
                       <div key={idx} className="py-2 flex flex-col gap-1"> 
-                        
-                        {/* Linha 1: Tempo Acumulado */}
-                        <div className="flex justify-between items-center text-sm">
+                        <div className="flex justify-between items-center text-sm w-full">
                           <span className="text-gray-400 font-medium">Spot por caixa {idx + 1}</span>
-                          <span className="text-blue-200 font-mono tracking-wider">{lap.formatted}</span>
+                          <span className="text-blue-200 font-mono tracking-wider text-right">{lap.formatted}</span>
                         </div>
-
-                        {/* Linha 2: Intervalo (se existir) */}
                         {lap.intervalFormatted && (
-                          <div className="flex justify-between items-center text-xs">
+                          <div className="flex justify-between items-center text-xs w-full">
                             <span className="text-gray-500">Spot intervalo por caixa {idx + 1}</span>
-                            <span className="text-green-400 font-mono tracking-wider">+{lap.intervalFormatted}</span>
+                            <span className="text-green-400 font-mono tracking-wider text-right">+{lap.intervalFormatted}</span>
                           </div>
                         )}
                       </div>
@@ -185,10 +242,9 @@ const History = ({ user }) => {
                 </div>
               )}
 
-              {/* Botões de Ação */}
               <div className="mt-4 pt-3 border-t border-gray-800/30 flex flex-col-reverse sm:flex-row justify-end gap-3">
                 <button
-                  onClick={() => handleDeleteClick(session.id)}
+                  onClick={() => handleDeleteClick(session)}
                   className="flex items-center justify-center gap-2 bg-red-900/20 hover:bg-red-900/40 text-red-400 border border-red-900/50 px-4 py-2 rounded-lg text-sm font-medium transition-colors w-full sm:w-auto"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -213,14 +269,13 @@ const History = ({ user }) => {
         </div>
       )}
 
-      {/* Modal de Exclusão */}
       {showDeleteModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl transform transition-all scale-100">
             <div className="text-center mb-6">
               <h2 className="text-xl font-bold text-white mb-2">Excluir Tarefa?</h2>
               <p className="text-gray-400 text-sm">
-                Tem certeza que deseja excluir esta tarefa permanentemente? Essa ação não pode ser desfeita.
+                Tem certeza que deseja excluir esta tarefa permanentemente?
               </p>
             </div>
             <div className="flex gap-3">

@@ -11,7 +11,7 @@ import History from './components/History';
 import CarTabs from './components/CarTabs';
 
 // Hooks e Utilitários
-import { useCarTimer } from './hooks/useCarTimer'; // <--- IMPORTAÇÃO NOVA
+import { useCarTimer } from './hooks/useCarTimer'; 
 import { formatTime } from './utils/formatTime';
 import { db, auth, firebaseConfig, googleProvider } from './firebaseConfig'; 
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
@@ -24,12 +24,10 @@ import {
 } from "firebase/auth";
 
 export default function App() {
-  // --- Estados Globais ---
   const [user, setUser] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [currentView, setCurrentView] = useState('timer'); 
   
-  // --- Hook do Cronômetro (Toda a lógica complexa está aqui agora) ---
   const { 
     cars, 
     activeCarId, 
@@ -38,11 +36,9 @@ export default function App() {
     actions 
   } = useCarTimer();
 
-  // --- Estados de UI ---
   const [isNamingSession, setIsNamingSession] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false); 
 
-  // --- Autenticação ---
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser ? currentUser : null);
@@ -51,7 +47,6 @@ export default function App() {
     return () => unsubscribeAuth();
   }, []);
 
-  // --- Handlers de UI (Conectam o botão à lógica do Hook) ---
   const handleStartRequest = () => {
     if (!activeCar.isRunning && activeCar.time === 0) {
       setIsNamingSession(true);
@@ -70,9 +65,9 @@ export default function App() {
   const handleCancelName = () => setIsNamingSession(false);
   
   const handleStopRequest = () => {
-    actions.stop(); // Para o tempo
+    actions.stop(); 
     if (activeCar.time > 0) {
-      setShowSaveModal(true); // Abre modal
+      setShowSaveModal(true); 
     }
   };
 
@@ -88,30 +83,29 @@ export default function App() {
 
     const finalSessionName = activeCar.taskName || `Carro ${activeCarId} - Sem Título`;
 
-    let timePrevius =  0;
-    const processTime = activeCar.laps.map((lapTime) => {
-      const interval = lapTime - timePrevius
-      timePrevius = lapTime
+    let previousLapTime = 0;
+    const lapsData = activeCar.laps.map((currentLapTime) => {
+      const interval = currentLapTime - previousLapTime;
+      previousLapTime = currentLapTime;
 
       return {
-        seconds: lapTime == 0 ? 0 : lapTime,
-        formatted: formatTime(lapTime == 0 ? 0 : lapTime),
-        // Salvamos o intervalo formatado corretamente aqui
+        seconds: currentLapTime,
+        formatted: formatTime(currentLapTime),
         intervalFormatted: formatTime(interval) 
       };
-
     });
-    
-    console.log(processTime)
 
     const newSession = {
       sessionName: finalSessionName,
       carId: activeCarId,
       totalTime: activeCar.time,
       formattedTime: formatTime(activeCar.time),
-      laps: processTime,
+      laps: lapsData, 
       createdAt: serverTimestamp(),
-      userId: user.uid
+      userId: user.uid,
+      // NOVO: Salvando informações do usuário para o Admin ver depois
+      userEmail: user.email,
+      userName: user.displayName || "Usuário Anônimo"
     };
 
     try {
@@ -122,15 +116,14 @@ export default function App() {
       alert("Erro ao salvar. Verifique as permissões.");
     }
 
-    handleDiscard(); // Reseta e fecha modal
+    handleDiscard(); 
   };
 
   const handleDiscard = () => {
     setShowSaveModal(false);
-    actions.reset(); // Reseta o cronômetro do hook
+    actions.reset(); 
   };
 
-  // --- Auth ---
   const handleLogin = async () => {
     try {
       await setPersistence(auth, browserSessionPersistence);
@@ -172,16 +165,13 @@ export default function App() {
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden relative">
         
-        {/* TELA DO CRONÔMETRO */}
         <div className={`flex flex-col items-center p-6 pt-10 space-y-4 min-h-full ${currentView === 'timer' ? 'block' : 'hidden'}`}>
-          
           <CarTabs 
             activeCarId={activeCarId} 
             onSelectCar={setActiveCarId} 
             cars={cars} 
           />
 
-          {/* Nome da Tarefa (Apenas Exibição Discreta se já definida) */}
           {activeCar.taskName && (
             <div className="text-gray-500 text-sm uppercase tracking-widest font-bold">
               {activeCar.taskName}
@@ -193,7 +183,6 @@ export default function App() {
           <LapsList laps={activeCar.laps} />
         </div>
 
-        {/* TELA DO HISTÓRICO */}
         <div className={`p-4 pt-10 min-h-full ${currentView === 'history' ? 'block' : 'hidden'}`}>
           <History user={user} />
         </div>
