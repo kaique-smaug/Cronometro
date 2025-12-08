@@ -1,5 +1,5 @@
 // src/App.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect} from 'react';
 
 // Componentes
 import TimerDisplay from './components/TimerDisplay';
@@ -24,10 +24,12 @@ import {
 } from "firebase/auth";
 
 export default function App() {
+  // --- Estados Globais ---
   const [user, setUser] = useState(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [currentView, setCurrentView] = useState('timer'); 
   
+  // --- Hook do Cronômetro ---
   const { 
     cars, 
     activeCarId, 
@@ -36,9 +38,14 @@ export default function App() {
     actions 
   } = useCarTimer();
 
+  // --- Estados de UI ---
   const [isNamingSession, setIsNamingSession] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false); 
+  
+  // NOVO: Estado para o modal de Erro
+  const [showErrorModal, setShowErrorModal] = useState(false);
 
+  // --- Autenticação ---
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser ? currentUser : null);
@@ -47,6 +54,7 @@ export default function App() {
     return () => unsubscribeAuth();
   }, []);
 
+  // --- Handlers de UI ---
   const handleStartRequest = () => {
     if (!activeCar.isRunning && activeCar.time === 0) {
       setIsNamingSession(true);
@@ -82,10 +90,11 @@ export default function App() {
     const collectionPath = `registros_cronometro/${appId}/users/${user.uid}/tempos`;
 
     const finalSessionName = activeCar.taskName || `Carro ${activeCarId} - Sem Título`;
-
+    
     let previousLapTime = 0;
-    const lapsData = activeCar.laps.map((currentLapTime) => {
-      const interval = currentLapTime - previousLapTime;
+    const lapsData = activeCar.laps.map((currentLapTime, index) => {
+      
+      const interval = index ==  0 ? 0: currentLapTime - previousLapTime;
       previousLapTime = currentLapTime;
 
       return {
@@ -103,7 +112,6 @@ export default function App() {
       laps: lapsData, 
       createdAt: serverTimestamp(),
       userId: user.uid,
-      // NOVO: Salvando informações do usuário para o Admin ver depois
       userEmail: user.email,
       userName: user.displayName || "Usuário Anônimo"
     };
@@ -111,12 +119,14 @@ export default function App() {
     try {
       await addDoc(collection(db, collectionPath), newSession);
       console.log(`Sessão do Carro ${activeCarId} salva!`);
+      // Fecha o modal de salvar e reseta APENAS se der sucesso
+      handleDiscard(); 
     } catch (e) {
       console.error("Erro ao salvar:", e);
-      alert("Erro ao salvar. Verifique as permissões.");
+      // CORREÇÃO: Abre o modal de erro em vez do alert
+      setShowSaveModal(false); // Fecha o modal de confirmação primeiro
+      setShowErrorModal(true); // Abre o modal de erro
     }
-
-    handleDiscard(); 
   };
 
   const handleDiscard = () => {
@@ -124,6 +134,11 @@ export default function App() {
     actions.reset(); 
   };
 
+  const handleCloseError = () => {
+    setShowErrorModal(false);
+  };
+
+  // --- Auth ---
   const handleLogin = async () => {
     try {
       await setPersistence(auth, browserSessionPersistence);
@@ -179,7 +194,6 @@ export default function App() {
           )}
 
           <TimerDisplay timeElapsed={activeCar.time} isRunning={activeCar.isRunning} />
-          
           <LapsList laps={activeCar.laps} />
         </div>
 
@@ -207,6 +221,7 @@ export default function App() {
         />
       )}
 
+      {/* MODAL DE CONFIRMAÇÃO DE SALVAMENTO */}
       {showSaveModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl transform transition-all scale-100">
@@ -234,6 +249,31 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* NOVO: MODAL DE ERRO */}
+      {showErrorModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-red-900/50 rounded-2xl p-6 w-full max-w-sm shadow-2xl transform transition-all scale-100">
+            <div className="text-center mb-6">
+              <div className="bg-red-500/20 w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-white mb-2">Erro ao Salvar</h2>
+              <p className="text-gray-400 text-sm">
+                Não foi possível salvar a sessão. Verifique se você tem permissão ou se está conectado à internet.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button onClick={handleCloseError} className="w-full py-3 px-4 bg-gray-800 hover:bg-gray-700 text-white rounded-xl font-medium border border-gray-700 transition-colors">
+                Fechar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

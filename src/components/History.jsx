@@ -1,9 +1,9 @@
 // src/components/History.jsx
 import React, { useEffect, useState } from 'react';
-// REMOVIDO: 'orderBy' da importação, pois faremos via JS
 import { collection, query, onSnapshot, deleteDoc, doc, collectionGroup } from "firebase/firestore";
 import { db, firebaseConfig } from '../firebaseConfig';
-import { downloadSessionExcel } from '../utils/excelHandler'; 
+// IMPORT ATUALIZADO: Agora importamos a função de PDF
+import { downloadSessionPDF } from '../utils/fileHandler'; 
 
 // LISTA DE E-MAILS ADMINS
 const ADMIN_EMAILS = [
@@ -29,14 +29,10 @@ const History = ({ user }) => {
     let q;
 
     if (viewMode === 'all' && isAdmin) {
-      // TRUQUE: Removemos o orderBy daqui. 
-      // O collectionGroup sem ordenação geralmente não pede índice composto.
       q = query(collectionGroup(db, 'tempos'));
     } else {
       const appId = firebaseConfig.appId || "seu-app-id-padrao";
       const collectionPath = `registros_cronometro/${appId}/users/${user.uid}/tempos`;
-      // Para a busca local, o orderBy geralmente funciona sem índice, 
-      // mas podemos tirar também para padronizar.
       q = query(collection(db, collectionPath));
     }
 
@@ -50,21 +46,16 @@ const History = ({ user }) => {
         });
       });
 
-      // ORDENAÇÃO VIA JAVASCRIPT (CLIENT-SIDE)
-      // Ordena do mais recente para o mais antigo baseando-se nos segundos do Timestamp
       fetchedSessions.sort((a, b) => {
         const timeA = a.createdAt?.seconds || 0;
         const timeB = b.createdAt?.seconds || 0;
-        return timeB - timeA; // Decrescente
+        return timeB - timeA; 
       });
 
       setSessions(fetchedSessions);
       setLoading(false);
     }, (error) => {
       console.error("Erro ao buscar histórico:", error);
-      if (error.code === 'failed-precondition') {
-        alert("Erro de permissão ou índice. Verifique o console.");
-      }
       setLoading(false);
     });
 
@@ -102,7 +93,7 @@ const History = ({ user }) => {
 
     try {
       let docRef;
-      if (viewMode === 'all') {
+      if (sessionToDelete.refPath) {
         docRef = doc(db, sessionToDelete.refPath);
       } else {
         const appId = firebaseConfig.appId || "seu-app-id-padrao";
@@ -191,6 +182,11 @@ const History = ({ user }) => {
         <div className="text-center py-12 bg-gray-900/50 rounded-2xl border border-gray-800">
           <p className="text-gray-500 mb-2">Nenhuma tarefa salva ainda.</p>
         </div>
+      ) : filteredSessions.length === 0 ? (
+        <div className="text-center py-12 bg-gray-900/50 rounded-2xl border border-gray-800 border-dashed">
+          <p className="text-gray-400 mb-2 font-medium">Nenhuma tarefa encontrada nesta data.</p>
+          <button onClick={() => setFilterDate('')} className="text-sm text-blue-400 hover:text-blue-300 underline">Limpar filtro</button>
+        </div>
       ) : (
         <div className="space-y-4">
           {filteredSessions.map((session) => (
@@ -225,13 +221,13 @@ const History = ({ user }) => {
                 <div className="mt-4 border-t border-gray-800/50 pt-2">
                   <div className="flex flex-col divide-y divide-gray-800/50 max-h-60 overflow-y-auto custom-scrollbar pr-2">
                     {session.laps.map((lap, idx) => (
-                      <div key={idx} className="py-2 flex flex-col gap-1"> 
-                        <div className="flex justify-between items-center text-sm w-full">
+                      <div key={idx} className="py-2 flex flex-col gap-1 w-full"> 
+                        <div className="flex justify-between w-full text-sm">
                           <span className="text-gray-400 font-medium">Spot por caixa {idx + 1}</span>
                           <span className="text-blue-200 font-mono tracking-wider text-right">{lap.formatted}</span>
                         </div>
                         {lap.intervalFormatted && (
-                          <div className="flex justify-between items-center text-xs w-full">
+                          <div className="flex justify-between w-full text-xs border-t border-gray-700/30 pt-1">
                             <span className="text-gray-500">Spot intervalo por caixa {idx + 1}</span>
                             <span className="text-green-400 font-mono tracking-wider text-right">+{lap.intervalFormatted}</span>
                           </div>
@@ -253,14 +249,15 @@ const History = ({ user }) => {
                   Excluir
                 </button>
 
+                {/* BOTÃO ATUALIZADO: Agora chama downloadSessionPDF e usa cor vermelha/PDF */}
                 <button
-                  onClick={() => downloadSessionExcel(session)}
-                  className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-lg shadow-green-900/20 w-full sm:w-auto"
+                  onClick={() => downloadSessionPDF(session)}
+                  className="flex items-center justify-center gap-2 bg-red-600 hover:bg-red-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-lg shadow-red-900/20 w-full sm:w-auto"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
                   </svg>
-                  Salvar Excel
+                  Salvar PDF
                 </button>
               </div>
 
