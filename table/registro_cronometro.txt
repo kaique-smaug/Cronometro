@@ -1,0 +1,10 @@
+CREATE TABLE registros_cronometro (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    data DATE,
+    tempo_inicio DATETIME,
+    tempo_fim DATETIME,
+    tempos TIME,
+    numero_caixa INTEGER,
+    nome_registro VARCHAR(50),
+    CONSTRAINT uk_tempos UNIQUE(data, numero_caixa, nome_registro)
+)
