@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { collection, query, onSnapshot, deleteDoc, doc, collectionGroup } from "firebase/firestore";
 import { db, firebaseConfig } from '../firebaseConfig';
 import { downloadSessionPDF, downloadMultipleSessionsPDF } from '../utils/fileHandler'; 
@@ -9,12 +9,34 @@ const History = ({ user }) => {
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filterDate, setFilterDate] = useState('');
+  
+  // Estados para Modal de Exclusão
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [sessionToDelete, setSessionToDelete] = useState(null);
+  
+  // Estados de Visualização/Admin
   const [viewMode, setViewMode] = useState('mine'); 
   const [selectedIds, setSelectedIds] = useState([]);
 
+  // --- NOVOS ESTADOS ---
+  const [activeMenuId, setActiveMenuId] = useState(null); // Qual menu está aberto
+  const [previewSession, setPreviewSession] = useState(null); // Qual sessão está sendo visualizada no modal web
+  
+  // Ref para fechar menu ao clicar fora
+  const menuRef = useRef(null);
+
   const isAdmin = user && ADMIN_EMAILS.includes(user.email);
+
+  // Fecha o menu se clicar fora
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setActiveMenuId(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -71,9 +93,10 @@ const History = ({ user }) => {
   };
 
   const handleDeleteClick = (e, session) => {
-    e.stopPropagation(); // Impede de selecionar o card ao clicar em excluir
+    e.stopPropagation(); 
     setSessionToDelete(session); 
     setShowDeleteModal(true);
+    setActiveMenuId(null); // Fecha o menu se estiver aberto
   };
 
   const handleConfirmDelete = async () => {
@@ -91,6 +114,23 @@ const History = ({ user }) => {
     }
   };
 
+  const toggleMenu = (e, id) => {
+    e.stopPropagation();
+    setActiveMenuId(activeMenuId === id ? null : id);
+  };
+
+  const handleViewClick = (e, session) => {
+    e.stopPropagation();
+    setPreviewSession(session);
+    setActiveMenuId(null);
+  };
+
+  const handleDownloadClick = (e, session) => {
+    e.stopPropagation();
+    downloadSessionPDF(session);
+    setActiveMenuId(null);
+  };
+
   const formatDateForDisplay = (timestamp) => {
     if (!timestamp) return "Data desconhecida";
     return new Date(timestamp.seconds * 1000).toLocaleString('pt-PT', {
@@ -104,7 +144,7 @@ const History = ({ user }) => {
     <div className="w-full max-w-3xl mx-auto p-4 pb-24 relative">
       <h2 className="text-2xl font-bold text-white mb-6 text-center uppercase tracking-widest">Histórico de Tarefas</h2>
 
-      {/* BOTÃO FLUTUANTE DE EXPORTAÇÃO */}
+      {/* BOTÃO FLUTUANTE DE EXPORTAÇÃO EM MASSA */}
       {selectedIds.length > 0 && (
         <div className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 animate-bounce">
           <button 
@@ -162,8 +202,10 @@ const History = ({ user }) => {
                 </div>
               </div>
 
-              {/* Botões de Ação */}
+              {/* Botões de Ação com Menu Dropdown */}
               <div className="mt-4 pt-3 border-t border-gray-800/30 flex justify-end gap-3" onClick={(e) => e.stopPropagation()}>
+                
+                {/* Botão Excluir */}
                 <button 
                    onClick={(e) => handleDeleteClick(e, session)} 
                    className="flex items-center gap-1 text-red-400 text-sm hover:bg-red-400/10 px-2 py-1 rounded transition-colors"
@@ -171,20 +213,107 @@ const History = ({ user }) => {
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                   Excluir
                 </button>
-                <button 
-                  onClick={(e) => { e.stopPropagation(); downloadSessionPDF(session); }} 
-                  className="bg-red-600 hover:bg-red-500 text-white px-3 py-1 rounded text-sm font-bold flex items-center gap-1 transition-colors"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
-                  PDF Único
-                </button>
+                
+                {/* Dropdown Menu */}
+                <div className="relative">
+                    <button 
+                        onClick={(e) => toggleMenu(e, session.id)}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-sm font-bold flex items-center gap-1 transition-colors"
+                    >
+                        Opções
+                        <svg xmlns="http://www.w3.org/2000/svg" className={`h-4 w-4 transition-transform ${activeMenuId === session.id ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                    </button>
+
+                    {/* Conteúdo do Dropdown */}
+                    {activeMenuId === session.id && (
+                        <div ref={menuRef} className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-xl shadow-xl z-50 overflow-hidden">
+                            <button 
+                                onClick={(e) => handleViewClick(e, session)}
+                                className="w-full text-left px-4 py-3 text-sm text-gray-200 hover:bg-gray-700 flex items-center gap-2"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                </svg>
+                                Visualizar
+                            </button>
+                            <button 
+                                onClick={(e) => handleDownloadClick(e, session)}
+                                className="w-full text-left px-4 py-3 text-sm text-gray-200 hover:bg-gray-700 flex items-center gap-2 border-t border-gray-700"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                </svg>
+                                Baixar PDF
+                            </button>
+                        </div>
+                    )}
+                </div>
+
               </div>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Modal de Exclusão */}
+      {/* --- MODAL DE VISUALIZAÇÃO DE DETALHES --- */}
+      {previewSession && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[100] p-4">
+           <div className="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col shadow-2xl">
+              
+              {/* Header do Modal */}
+              <div className="p-6 border-b border-gray-800 bg-gray-900/50 flex justify-between items-start">
+                 <div>
+                    <h3 className="text-xl font-bold text-white">{previewSession.sessionName}</h3>
+                    <p className="text-gray-400 text-sm mt-1">{formatDateForDisplay(previewSession.createdAt)}</p>
+                    {previewSession.userName && <span className="inline-block mt-2 px-2 py-0.5 rounded bg-blue-900/30 text-blue-400 text-xs font-bold border border-blue-900/50">{previewSession.userName}</span>}
+                 </div>
+                 <button onClick={() => setPreviewSession(null)} className="text-gray-400 hover:text-white p-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                 </button>
+              </div>
+
+              {/* Corpo do Modal (Lista de Voltas) */}
+              <div className="flex-1 overflow-y-auto p-0">
+                  <div className="sticky top-0 bg-gray-800 text-gray-400 text-xs font-bold uppercase tracking-wider grid grid-cols-3 px-6 py-3 border-b border-gray-700">
+                     <div className="text-center">Caixa</div>
+                     <div className="text-center">Tempo</div>
+                     <div className="text-center">Intervalo</div>
+                  </div>
+                  {previewSession.laps && previewSession.laps.map((lap, idx) => (
+                      <div key={idx} className={`grid grid-cols-3 px-6 py-3 text-sm border-b border-gray-800 ${idx % 2 === 0 ? 'bg-gray-900' : 'bg-gray-900/50'}`}>
+                         <div className="text-center text-gray-500 font-mono">#{idx + 1}</div>
+                         <div className="text-center text-white font-mono font-bold">{lap.formatted}</div>
+                         <div className="text-center text-gray-400 font-mono">{lap.intervalFormatted || '-'}</div>
+                      </div>
+                  ))}
+              </div>
+
+              {/* Rodapé do Modal */}
+              <div className="p-4 border-t border-gray-800 bg-gray-900 flex justify-between items-center">
+                 <div className="text-white font-bold text-lg">
+                    Total: <span className="font-mono text-blue-400">{previewSession.formattedTime}</span>
+                 </div>
+                 <button 
+                    onClick={() => downloadSessionPDF(previewSession)}
+                    className="bg-gray-800 hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm font-medium border border-gray-700 transition-colors flex items-center gap-2"
+                 >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Baixar PDF
+                 </button>
+              </div>
+
+           </div>
+        </div>
+      )}
+
+      {/* Modal de Exclusão (Mantido) */}
       {showDeleteModal && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl">

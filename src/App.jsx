@@ -8,6 +8,7 @@ import SessionNameModal from './components/SessionNameModal';
 import Menu from './components/Menu';
 import History from './components/History';
 import CarTabs from './components/CarTabs';
+import RallyTracker from './components/RallyTracker'; // <--- IMPORTADO AQUI
 
 // Hooks e Utilitários
 import { useCarTimer } from './hooks/useCarTimer'; 
@@ -187,7 +188,6 @@ export default function App() {
 
       <div className="flex-1 overflow-y-auto overflow-x-hidden relative">
         
-        {/* AJUSTE DE LAYOUT: pt-24 para mobile garante espaço para o menu hambúrguer */}
         <div className={`flex flex-col items-center p-6 pt-24 md:pt-10 space-y-4 min-h-full ${currentView === 'timer' ? 'block' : 'hidden'}`}>
           <CarTabs 
             activeCarId={activeCarId} 
@@ -202,10 +202,20 @@ export default function App() {
           )}
 
           <TimerDisplay timeElapsed={activeCar.time} isRunning={activeCar.isRunning} />
+
+          {/* --- INÍCIO DA INTEGRAÇÃO DO RALLY TRACKER --- */}
+          {/* Só mostra se o tempo estiver correndo ou for maior que 0 */}
+          {(activeCar.isRunning || activeCar.time > 0) && (
+            <RallyTracker 
+              timeElapsed={activeCar.time} 
+              laps={activeCar.laps} 
+            />
+          )}
+          {/* --- FIM DA INTEGRAÇÃO DO RALLY TRACKER --- */}
+
           <LapsList laps={activeCar.laps} />
         </div>
 
-        {/* AJUSTE DE LAYOUT: pt-24 também no Histórico para manter padrão */}
         <div className={`p-4 pt-24 md:pt-10 min-h-full ${currentView === 'history' ? 'block' : 'hidden'}`}>
           <History user={user} />
         </div>
