@@ -2,8 +2,8 @@ import React from 'react';
 import { formatTime } from '../utils/formatTime';
 
 export default function RallyTracker({ timeElapsed, laps }) {
-  const TOTAL_BOXES = 30;
-  const TIME_PER_BOX = 75; // 1 min e 10s
+  const TOTAL_BOXES = 34;
+  const TIME_PER_BOX = 70; // 1 min e 10s
 
   const currentBox = laps.length + 1;
 
@@ -13,6 +13,10 @@ export default function RallyTracker({ timeElapsed, laps }) {
   const targetTotalTime = currentBox * TIME_PER_BOX;
   const timeToNextBox = targetTotalTime - timeElapsed;
   const delta = timeToNextBox - TIME_PER_BOX;
+
+  // Visualização do sinal (mostra + se excedeu o tempo)
+  const isLate = timeToNextBox < 0;
+  const absTime = Math.abs(timeToNextBox);
 
   // Cores
   let statusColor = "text-white";
@@ -35,28 +39,27 @@ export default function RallyTracker({ timeElapsed, laps }) {
 
   return (
     <div className={`
-      /* --- POSICIONAMENTO E TAMANHO --- */
-      z-40 flex flex-col items-center justify-center
-      
-      /* Tamanho Reduzido (Compacto) */
-      w-24 h-24 
-      md:w-28 md:h-28
-      
-      /* MOBILE: Relativo, logo abaixo do cronômetro */
-      relative
-      -mt-6 mb-4 /* Margem negativa para "colar" no círculo de cima */
-      
-      /* DESKTOP: Fixo ao centro, deslocado para a direita */
-      md:fixed 
-      md:top-1/2 md:left-1/2 
-      md:ml-36 /* Empurra 144px para a direita do centro (colado no cronômetro) */
-      md:-translate-y-1/2
-      md:mt-0 md:mb-0
-      
-      /* --- ESTILO VISUAL --- */
-      bg-gray-900/80 backdrop-blur-sm 
+      /* --- CONFIGURAÇÕES GERAIS --- */
+      z-50 flex flex-col items-center justify-center
+      bg-gray-900/90 backdrop-blur-md 
       rounded-xl border ${borderColor} ${glow}
-      transition-all duration-300 ease-in-out shadow-xl
+      transition-all duration-300 ease-in-out shadow-2xl
+      
+      /* IMPORTANTE: FIXED PARA FICAR PRESO NA TELA */
+      fixed 
+
+      /* --- POSICIONAMENTO MOBILE (Celular) --- */
+      /* Fica no canto inferior direito, flutuando acima dos controles */
+      bottom-32 right-4 
+      w-24 h-24 
+      
+      /* --- POSICIONAMENTO DESKTOP (PC) --- */
+      /* Fica centralizado verticalmente, ao lado direito do cronômetro */
+      md:top-1/2 md:left-1/2 
+      md:ml-36 /* Empurra para o lado do cronômetro central */
+      md:bottom-auto md:right-auto 
+      md:-translate-y-1/2
+      md:w-28 md:h-28
     `}>
       
       {/* 1. Número da Caixa */}
@@ -64,10 +67,10 @@ export default function RallyTracker({ timeElapsed, laps }) {
         CX {currentBox}/{TOTAL_BOXES}
       </div>
 
-      {/* 2. Tempo Principal (Fonte menor para caber no quadrado menor) */}
-      <div className={`text-xl md:text-2xl font-mono font-black tracking-tighter ${timeToNextBox < 10 && timeToNextBox > 0 ? 'animate-pulse text-red-500' : 'text-white'}`}>
-        {timeToNextBox < 0 ? '-' : ''}
-        {formatTime(Math.abs(timeToNextBox))}
+      {/* 2. Tempo Principal */}
+      <div className={`text-xl md:text-2xl font-mono font-black tracking-tighter ${isLate ? 'animate-pulse text-red-500' : 'text-white'}`}>
+        {isLate ? '+' : ''}
+        {formatTime(absTime)}
       </div>
 
       {/* 3. Delta (Diferença) */}
@@ -76,7 +79,7 @@ export default function RallyTracker({ timeElapsed, laps }) {
           {delta > 0 ? '+' : ''}{delta.toFixed(1)}s
         </span>
         
-        {/* Barra Visual (Mais fina) */}
+        {/* Barra Visual */}
         <div className="w-full h-0.5 bg-gray-700 rounded-full mt-1 overflow-hidden">
              <div 
                 className={`h-full transition-all duration-500 ${delta > 2 ? 'bg-blue-500' : delta < -2 ? 'bg-red-500' : 'bg-green-500'}`}
